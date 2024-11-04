@@ -107,7 +107,7 @@
 #include "ff_ffplay_options.h"
 
 static AVPacket flush_pkt;
-
+static AVFrame *latest_frame = NULL;  // 全局变量保存最新帧
 #if CONFIG_AVFILTER
 // FFP_MERGE: opt_add_vfilter
 #endif
@@ -1684,6 +1684,19 @@ static int queue_picture(FFPlayer *ffp, AVFrame *src_frame, double pts, double d
     }
     return 0;
 }
+void set_latest_frame(AVFrame *frame) {
+    if (latest_frame) {
+        av_frame_free(&latest_frame);  // 释放之前的帧
+    }
+    latest_frame = av_frame_clone(frame);  // 克隆当前帧并保存
+}
+int get_latest_frame(AVFrame *frame) {
+    if (latest_frame && frame) {
+        av_frame_copy(frame, latest_frame);  // 复制最新帧的数据到传入的 frame
+        return 0;  // 成功更新
+    }
+    return -1;  // 更新失败
+}
 
 static int get_video_frame(FFPlayer *ffp, AVFrame *frame)
 {
@@ -1696,7 +1709,7 @@ static int get_video_frame(FFPlayer *ffp, AVFrame *frame)
 
     if (got_picture) {
         double dpts = NAN;
-
+		set_latest_frame(frame);
         if (frame->pts != AV_NOPTS_VALUE)
             dpts = av_q2d(is->video_st->time_base) * frame->pts;
 

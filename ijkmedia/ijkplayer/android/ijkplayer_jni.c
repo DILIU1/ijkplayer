@@ -39,7 +39,10 @@
 #include "ijksdl/android/ijksdl_android_jni.h"
 #include "ijksdl/android/ijksdl_codec_android_mediadef.h"
 #include "ijkavformat/ijkavformat.h"
-
+#include <libavutil/frame.h>
+#include <libavutil/pixfmt.h>  // 包含像素格式的定义
+#include <android/log.h>
+#include <android/bitmap.h>
 #define JNI_MODULE_PACKAGE      "tv/danmaku/ijk/media/player"
 #define JNI_CLASS_IJKPLAYER     "tv/danmaku/ijk/media/player/IjkMediaPlayer"
 #define JNI_IJK_MEDIA_EXCEPTION "tv/danmaku/ijk/media/player/exceptions/IjkMediaException"
@@ -48,6 +51,7 @@
     JNI_CHECK_GOTO((retval != EIJK_INVALID_STATE), env, "java/lang/IllegalStateException", NULL, label); \
     JNI_CHECK_GOTO((retval != EIJK_OUT_OF_MEMORY), env, "java/lang/OutOfMemoryError", NULL, label); \
     JNI_CHECK_GOTO((retval == 0), env, JNI_IJK_MEDIA_EXCEPTION, NULL, label);
+#define LOG_TAG "IjkPlayer"
 
 static JavaVM* g_jvm;
 
@@ -318,6 +322,36 @@ IjkMediaPlayer_seekTo(JNIEnv *env, jobject thiz, jlong msec)
 LABEL_RETURN:
     ijkmp_dec_ref_p(&mp);
 }
+
+static void
+IjkMediaPlayer_testPrint(JNIEnv *env, jobject thiz)
+{
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "_testPrint called from Java!");
+} 
+static jobject 
+IjkMediaPlayer_getFrame(JNIEnv *env, jobject thiz)
+{
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "get_latest_frame called from Java!");
+
+    // 获取最新帧
+    AVFrame *frame = NULL;
+    if (get_latest_frame(frame) < 0 ) {
+        return NULL;  // 没有最新帧
+    }
+    // 打印 AVFrame 的格式
+    const char *pix_fmt_name = av_get_pix_fmt_name(frame->format);
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "AVFrame format: %s", pix_fmt_name);
+
+    // 创建一个 ByteBuffer
+    int size = av_image_get_buffer_size(AV_PIX_FMT_RGBA, frame->width, frame->height, 1);
+    jobject byteBuffer = (*env)->NewDirectByteBuffer(env, frame->data[0], size);
+    if (byteBuffer == NULL) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to create ByteBuffer");
+        return NULL;
+    }
+
+    return byteBuffer;  // 返回 ByteBuffer 对象
+} 
 
 static jboolean
 IjkMediaPlayer_isPlaying(JNIEnv *env, jobject thiz)
@@ -1180,6 +1214,8 @@ static JNINativeMethod g_methods[] = {
 
     { "native_setLogLevel",     "(I)V",                     (void *) IjkMediaPlayer_native_setLogLevel },
     { "_setFrameAtTime",        "(Ljava/lang/String;JJII)V", (void *) IjkMediaPlayer_setFrameAtTime },
+	{ "_testPrint", "()V", (void *) IjkMediaPlayer_testPrint },
+	{ "_getFrame", "()V", (void *) IjkMediaPlayer_getFrame },
 };
 
 JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved)

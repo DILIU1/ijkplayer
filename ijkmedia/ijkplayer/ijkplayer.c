@@ -639,7 +639,10 @@ long ijkmp_get_duration(IjkMediaPlayer *mp)
     pthread_mutex_unlock(&mp->mutex);
     return retval;
 }
+int ijkmp_get_latest_frame(AVFrame *frame) {
 
+    return get_latest_frame(frame);
+}
 static long ijkmp_get_playable_duration_l(IjkMediaPlayer *mp)
 {
     return ffp_get_playable_duration_l(mp->ffplayer);

@@ -29,6 +29,7 @@
 #include "ff_fferror.h"
 #include "ff_ffmsg.h"
 
+int get_latest_frame(AVFrame *frame);
 void      ffp_global_init();
 void      ffp_global_uninit();
 void      ffp_global_set_log_report(int use_report);

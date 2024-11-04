@@ -23,7 +23,7 @@
 
 #ifndef IJKPLAYER_ANDROID__IJKPLAYER_H
 #define IJKPLAYER_ANDROID__IJKPLAYER_H
-
+#include <libavutil/frame.h>
 #include <stdbool.h>
 #include "ff_ffmsg_queue.h"
 
@@ -150,7 +150,7 @@ struct SDL_Vout;
 #define IJKMP_OPT_CATEGORY_PLAYER FFP_OPT_CATEGORY_PLAYER
 #define IJKMP_OPT_CATEGORY_SWR    FFP_OPT_CATEGORY_SWR
 
-
+int ijkmp_get_latest_frame(AVFrame *frame);
 void            ijkmp_global_init();
 void            ijkmp_global_uninit();
 void            ijkmp_global_set_log_report(int use_report);
