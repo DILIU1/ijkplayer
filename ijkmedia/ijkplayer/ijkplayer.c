@@ -24,7 +24,7 @@
 #include "ijkplayer.h"
 #include "ijkplayer_internal.h"
 #include "ijkversion.h"
-
+#include <android/log.h>
 #define MP_RET_IF_FAILED(ret) \
     do { \
         int retval = ret; \
@@ -639,9 +639,9 @@ long ijkmp_get_duration(IjkMediaPlayer *mp)
     pthread_mutex_unlock(&mp->mutex);
     return retval;
 }
-int ijkmp_get_latest_frame(AVFrame *frame) {
+int get_latest_frame(AVFrame *frame) {
+	return get_latest_frame_ffplay(frame);  // 调用 get_latest_frame_ffplay
 
-    return get_latest_frame(frame);
 }
 static long ijkmp_get_playable_duration_l(IjkMediaPlayer *mp)
 {

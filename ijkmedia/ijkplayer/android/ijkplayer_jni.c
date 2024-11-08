@@ -39,14 +39,22 @@
 #include "ijksdl/android/ijksdl_android_jni.h"
 #include "ijksdl/android/ijksdl_codec_android_mediadef.h"
 #include "ijkavformat/ijkavformat.h"
-#include <libavutil/frame.h>
-#include <libavutil/pixfmt.h>  // 包含像素格式的定义
 #include <android/log.h>
-#include <android/bitmap.h>
+#include <libavutil/frame.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <libswscale/swscale.h>
+#include <libavutil/imgutils.h>
+
+#include <sys/stat.h>
+#include <jni.h>
+
+
+
 #define JNI_MODULE_PACKAGE      "tv/danmaku/ijk/media/player"
 #define JNI_CLASS_IJKPLAYER     "tv/danmaku/ijk/media/player/IjkMediaPlayer"
 #define JNI_IJK_MEDIA_EXCEPTION "tv/danmaku/ijk/media/player/exceptions/IjkMediaException"
-
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define IJK_CHECK_MPRET_GOTO(retval, env, label) \
     JNI_CHECK_GOTO((retval != EIJK_INVALID_STATE), env, "java/lang/IllegalStateException", NULL, label); \
     JNI_CHECK_GOTO((retval != EIJK_OUT_OF_MEMORY), env, "java/lang/OutOfMemoryError", NULL, label); \
@@ -328,30 +336,141 @@ IjkMediaPlayer_testPrint(JNIEnv *env, jobject thiz)
 {
     __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "_testPrint called from Java!");
 } 
+
 static jobject 
 IjkMediaPlayer_getFrame(JNIEnv *env, jobject thiz)
 {
-    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "get_latest_frame called from Java!");
+    LOGI("_getFrame called from Java!");
 
-    // 获取最新帧
-    AVFrame *frame = NULL;
-    if (get_latest_frame(frame) < 0 ) {
-        return NULL;  // 没有最新帧
+    AVFrame *frame = av_frame_alloc();
+	if (frame == NULL) {
+    LOGI("Failed to allocate frame");
+    return NULL; // 返回 NULL 表示分配失败
+	}
+    // 获取最新的帧
+    if (get_latest_frame(frame) != 0) {
+        LOGI("No frame available");
+        return NULL; // 没有最新帧，返回 NULL
     }
-    // 打印 AVFrame 的格式
-    const char *pix_fmt_name = av_get_pix_fmt_name(frame->format);
-    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "AVFrame format: %s", pix_fmt_name);
+    LOGI("Successfully obtained latest frame");
 
-    // 创建一个 ByteBuffer
-    int size = av_image_get_buffer_size(AV_PIX_FMT_RGBA, frame->width, frame->height, 1);
-    jobject byteBuffer = (*env)->NewDirectByteBuffer(env, frame->data[0], size);
-    if (byteBuffer == NULL) {
-        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to create ByteBuffer");
+
+    // 打印帧格式信息
+    const char *pix_fmt_name = av_get_pix_fmt_name(frame->format);
+    LOGI("AVFrame format: %s, width: %d, height: %d", pix_fmt_name, frame->width, frame->height);
+
+    // 获取图像数据的大小
+    int buffer_size = av_image_get_buffer_size(frame->format, frame->width, frame->height, 1);
+    if (buffer_size < 0) {
+        LOGI("Invalid frame size");
+        return NULL;
+    }
+    LOGI("Frame buffer size: %d bytes", buffer_size);
+
+    // 创建一个 ByteBuffer 并将图像数据复制到其中
+    jobject byteBuffer = (*env)->NewDirectByteBuffer(env, frame->data[0], buffer_size);
+    if (!byteBuffer) {
+        LOGI("Failed to create ByteBuffer");
+        return NULL;
+    }
+    LOGI("ByteBuffer created successfully");
+
+    return byteBuffer; // 返回 ByteBuffer 对象
+} 
+static jobject 
+IjkMediaPlayer_getFrameRgb(JNIEnv *env, jobject thiz)
+{
+    LOGI("_getFrame called from Java!");
+
+    // 分配原始帧
+    AVFrame *frame = av_frame_alloc();
+    if (frame == NULL) {
+        LOGI("Failed to allocate frame");
         return NULL;
     }
 
-    return byteBuffer;  // 返回 ByteBuffer 对象
-} 
+    // 获取最新的帧
+    if (get_latest_frame(frame) != 0) {
+        LOGI("No frame available");
+        av_frame_free(&frame);
+        return NULL;
+    }
+    LOGI("Successfully obtained latest frame");
+
+    // 打印帧格式信息
+    const char *pix_fmt_name = av_get_pix_fmt_name(frame->format);
+    LOGI("Original AVFrame format: %s, width: %d, height: %d, linesize: %d", pix_fmt_name, frame->width, frame->height, frame->linesize[0]);
+
+    // 设置 RGB 转换
+    LOGI("Setting up conversion context to RGB format...");
+    struct SwsContext *sws_ctx = sws_getContext(frame->width, frame->height, frame->format,
+                                                frame->width, frame->height, AV_PIX_FMT_RGB24,
+                                                SWS_BILINEAR, NULL, NULL, NULL);
+
+    if (!sws_ctx) {
+        LOGI("Failed to initialize the conversion context");
+        av_frame_free(&frame);
+        return NULL;
+    }
+    LOGI("Conversion context initialized successfully");
+
+    // 分配 RGB 帧
+    LOGI("Allocating memory for RGB frame...");
+    AVFrame *rgb_frame = av_frame_alloc();
+    int rgb_buffer_size = av_image_get_buffer_size(AV_PIX_FMT_RGB24, frame->width, frame->height, 1);
+    uint8_t *rgb_buffer = (uint8_t *)av_malloc(rgb_buffer_size);
+
+    if (!rgb_buffer) {
+        LOGI("Failed to allocate buffer for RGB frame");
+        av_frame_free(&rgb_frame);
+        sws_freeContext(sws_ctx);
+        av_frame_free(&frame);
+        return NULL;
+    }
+    LOGI("RGB buffer allocated with size: %d bytes", rgb_buffer_size);
+
+    av_image_fill_arrays(rgb_frame->data, rgb_frame->linesize, rgb_buffer, AV_PIX_FMT_RGB24, frame->width, frame->height, 1);
+    LOGI("RGB frame allocated with linesize: %d", rgb_frame->linesize[0]);
+
+    // 转换为 RGB 格式
+    LOGI("Converting frame to RGB format...");
+    int ret = sws_scale(sws_ctx, (const uint8_t * const *)frame->data, frame->linesize, 0, frame->height, rgb_frame->data, rgb_frame->linesize);
+    if (ret <= 0) {
+        LOGI("Frame conversion to RGB failed");
+        av_free(rgb_buffer);
+        av_frame_free(&rgb_frame);
+        sws_freeContext(sws_ctx);
+        av_frame_free(&frame);
+        return NULL;
+    }
+    LOGI("Frame converted to RGB format successfully");
+
+    // 打印转换后 RGB 数据的关键信息
+    LOGI("Converted RGB frame info - format: RGB24, width: %d, height: %d, linesize: %d", frame->width, frame->height, rgb_frame->linesize[0]);
+
+    // 创建 ByteBuffer 并将 RGB 图像数据复制到其中
+    LOGI("Creating ByteBuffer from RGB data...");
+    jobject byteBuffer = (*env)->NewDirectByteBuffer(env, rgb_frame->data[0], rgb_buffer_size);
+    if (!byteBuffer) {
+        LOGI("Failed to create ByteBuffer");
+        av_free(rgb_buffer);
+        av_frame_free(&rgb_frame);
+        sws_freeContext(sws_ctx);
+        av_frame_free(&frame);
+        return NULL;
+    }
+    LOGI("ByteBuffer created successfully, buffer size: %d bytes", rgb_buffer_size);
+
+    // 清理资源
+    LOGI("Cleaning up allocated resources...");
+    av_free(rgb_buffer);
+    av_frame_free(&rgb_frame);
+    sws_freeContext(sws_ctx);
+    av_frame_free(&frame);
+    LOGI("Resource cleanup complete");
+
+    return byteBuffer; // 返回 RGB 格式的 ByteBuffer
+}
 
 static jboolean
 IjkMediaPlayer_isPlaying(JNIEnv *env, jobject thiz)
@@ -1215,7 +1334,9 @@ static JNINativeMethod g_methods[] = {
     { "native_setLogLevel",     "(I)V",                     (void *) IjkMediaPlayer_native_setLogLevel },
     { "_setFrameAtTime",        "(Ljava/lang/String;JJII)V", (void *) IjkMediaPlayer_setFrameAtTime },
 	{ "_testPrint", "()V", (void *) IjkMediaPlayer_testPrint },
-	{ "_getFrame", "()V", (void *) IjkMediaPlayer_getFrame },
+	{ "_getFrame", "()Ljava/nio/ByteBuffer;", (void *) IjkMediaPlayer_getFrame },
+	{ "_getframeRgb", "()Ljava/nio/ByteBuffer;", (void *) IjkMediaPlayer_getFrameRgb },
+
 };
 
 JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved)

@@ -74,6 +74,13 @@
 #include "ijkversion.h"
 #include "ijkplayer.h"
 #include <stdatomic.h>
+
+#include <pthread.h>
+#include <android/log.h>
+pthread_mutex_t frame_mutex = PTHREAD_MUTEX_INITIALIZER;
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+
+#define LOG_TAG "IjkPlayer"
 #if defined(__ANDROID__)
 #include "ijksoundtouch/ijksoundtouch_wrap.h"
 #endif
@@ -1685,18 +1692,51 @@ static int queue_picture(FFPlayer *ffp, AVFrame *src_frame, double pts, double d
     return 0;
 }
 void set_latest_frame(AVFrame *frame) {
+LOGI("set_latest_frame frame");
+	pthread_mutex_lock(&frame_mutex);
     if (latest_frame) {
         av_frame_free(&latest_frame);  // 释放之前的帧
     }
     latest_frame = av_frame_clone(frame);  // 克隆当前帧并保存
-}
-int get_latest_frame(AVFrame *frame) {
-    if (latest_frame && frame) {
-        av_frame_copy(frame, latest_frame);  // 复制最新帧的数据到传入的 frame
-        return 0;  // 成功更新
+	LOGI("Setting frame - format: %d, width: %d, height: %d", frame->format, frame->width, frame->height);
+	    pthread_mutex_unlock(&frame_mutex);
+		    if (!latest_frame) {
+        LOGI("Failed to clone frame");
     }
-    return -1;  // 更新失败
 }
+int get_latest_frame_ffplay(AVFrame *frame) {
+	pthread_mutex_lock(&frame_mutex);
+	    if (!frame || !latest_frame) {
+        pthread_mutex_unlock(&frame_mutex);
+        LOGI("Frame or latest_frame is NULL");
+        return -1;
+    }
+        // 初始化 frame 的格式、宽度和高度
+        frame->format = latest_frame->format;
+        frame->width = latest_frame->width;
+        frame->height = latest_frame->height;
+		
+				// 为 frame 分配缓冲区
+		if (av_frame_get_buffer(frame, 32) < 0) {  // 32 是对齐参数，可以根据需求调整
+			LOGI("Failed to allocate buffer for frame");
+			pthread_mutex_unlock(&frame_mutex);
+			return -1;
+		}
+        
+        // 执行帧复制并检查结果
+        if (av_frame_copy(frame, latest_frame) < 0) {
+            LOGI("Failed to copy frame data");
+            return -1;
+        }
+
+		LOGI("Getting frame - latest_frame format: %d, width: %d, height: %d", latest_frame->format, latest_frame->width, latest_frame->height);
+				LOGI("Getting frame - latest_frame format: %d, width: %d, height: %d", frame->format, frame->width, frame->height);
+		pthread_mutex_unlock(&frame_mutex);
+        return 0;  // 成功更新
+    
+
+}
+
 
 static int get_video_frame(FFPlayer *ffp, AVFrame *frame)
 {
@@ -1709,7 +1749,7 @@ static int get_video_frame(FFPlayer *ffp, AVFrame *frame)
 
     if (got_picture) {
         double dpts = NAN;
-		set_latest_frame(frame);
+	
         if (frame->pts != AV_NOPTS_VALUE)
             dpts = av_q2d(is->video_st->time_base) * frame->pts;
 
@@ -2328,6 +2368,7 @@ static int ffplay_video_thread(void *arg)
                 is->frame_last_filter_delay = 0;
             tb = av_buffersink_get_time_base(filt_out);
 #endif
+			set_latest_frame(frame);
             duration = (frame_rate.num && frame_rate.den ? av_q2d((AVRational){frame_rate.den, frame_rate.num}) : 0);
             pts = (frame->pts == AV_NOPTS_VALUE) ? NAN : frame->pts * av_q2d(tb);
             ret = queue_picture(ffp, frame, pts, duration, frame->pkt_pos, is->viddec.pkt_serial);
